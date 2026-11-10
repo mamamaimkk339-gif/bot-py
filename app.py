@@ -8,20 +8,21 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-# Ключи берутся из переменных окружения (задаются в настройках Infrlo)
+# Ключи берутся из переменных окружения
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 
 SYSTEM_PROMPT = "Ты дружелюбный и полезный ИИ-ассистент. Отвечай на языке пользователя."
-MAX_HISTORY = 10  # Максимум сообщений в истории (для экономии памяти)
-MAX_USERS = 50    # Максимум пользователей, чью историю храним одновременно
+MAX_HISTORY = 10
+MAX_USERS = 50
 
-# Актуальные и стабильные модели на Groq (август 2026)
-# Если 404 - код переключится на следующую
+# Актуальные модели Groq (ноябрь 2026)
 MODELS = [
-    "llama-3.3-70b-versatile", 
-    "gemma2-9b-it", 
-    "mixtral-8x7b-32768"
+    "openai/gpt-oss-120b",   # Мощная и быстрая
+    "openai/gpt-oss-20b",    # Легкая и быстрая (замена Llama 8B)
+    "qwen/qwen3.8-27b",      # Хороший баланс
+    "gemma2-9b-it",          # Стабильная и быстрая
+    "meta-llama/llama-4-maverick-17b-128e-instruct" # Если нужен Llama
 ]
 
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +40,7 @@ def get_history(user_id):
     """Безопасно получает историю, удаляя старых пользователей при переполнении."""
     if user_id not in histories:
         if len(histories) >= MAX_USERS:
-            histories.pop(next(iter(histories))) # Удаляем самого старого
+            histories.pop(next(iter(histories)))
         histories[user_id] = []
     return histories[user_id]
 
@@ -60,7 +61,7 @@ async def ask_groq(history):
                 break 
             
             except (openai.RateLimitError, openai.InternalServerError):
-                # Ошибка 429 (лимиты) или 500/502 (сервер Groq перегружен). Ждем.
+                # Ошибка 429 (лимиты) или 500/502 (сервер Groq перегружен).
                 logging.warning(f"Модель {model} перегружена или лимит. Ждем...")
                 await asyncio.sleep(2)
                 last_error = "Превышен лимит запросов. Попробуйте позже."
@@ -93,10 +94,8 @@ async def cmd_reset(message: Message):
 async def chat(message: Message):
     history = get_history(message.from_user.id)
     
-    # Добавляем сообщение пользователя
     history.append({"role": "user", "content": message.text})
     
-    # Обрезаем историю, если она стала слишком длинной
     if len(history) > MAX_HISTORY:
         del history[:-MAX_HISTORY]
 
@@ -106,21 +105,18 @@ async def chat(message: Message):
         answer = await ask_groq(history)
     except Exception as e:
         logging.error(f"Ошибка при запросе к Groq: {e}")
-        history.pop() # Убираем сообщение пользователя, так как ответа не было
+        history.pop()
         await message.answer(f"⚠️ Ошибка: {e}")
         return
 
-    # Добавляем ответ бота в историю
     history.append({"role": "assistant", "content": answer})
     
-    # Отправляем ответ (разбивая на части, если он слишком длинный)
     for i in range(0, len(answer), 4096):
         await message.answer(answer[i:i + 4096])
         
-    gc.collect() # Очистка памяти
+    gc.collect()
 
 async def main():
-    # Ограничиваем количество одновременных задач для экономии RAM
     await dp.start_polling(bot, tasks_concurrency_limit=10)
 
 if __name__ == "__main__":
